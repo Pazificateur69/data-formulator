@@ -17,11 +17,11 @@ import google.auth
 import pandas as pd
 import pyarrow as pa
 import requests
-from google.auth.exceptions import DefaultCredentialsError
+from google.auth.exceptions import DefaultCredentialsError, RefreshError
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
-from data_formulator.data_loader import probe_utils
+from data_formulator.data_loader import google_sign_in, probe_utils
 from data_formulator.data_loader.external_data_loader import ExternalDataLoader
 from data_formulator.data_loader.query_runtime import check_cancelled
 from data_formulator.security.sanitize import sanitize_error_message
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 _ADMIN_API = "https://analyticsadmin.googleapis.com/v1beta"
 _DATA_API = "https://analyticsdata.googleapis.com/v1beta"
-_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
+_SCOPE = google_sign_in.SCOPES["google_analytics"]
 _REQUEST_TIMEOUT_SECONDS = 60
 _MAX_ROWS = 10_001
 _RE2_SPECIAL = set("\\.+*?()|[]{}^$")
@@ -72,18 +72,29 @@ class GoogleAnalyticsDataLoader(ExternalDataLoader):
 
     @classmethod
     def auth_paths(cls) -> list[dict[str, Any]]:
-        return [
+        sign_in = google_sign_in.configured()
+        paths = [
             {"id": "default_credentials", "label": "Application default credentials",
              "description": "Use gcloud login with the Analytics scope, or GOOGLE_APPLICATION_CREDENTIALS.",
-             "fields": [], "required_fields": [], "kind": "ambient", "default": True},
+             "fields": [], "required_fields": [], "kind": "ambient", "default": not sign_in},
             {"id": "service_account_file", "label": "Service account file",
              "description": "Use a service account JSON key file on this machine.",
              "fields": ["credentials_path"], "required_fields": ["credentials_path"], "kind": "credentials"},
         ]
+        if sign_in:
+            paths.insert(0, google_sign_in.sign_in_path(
+                "Use your Google account and the Analytics properties it can read."))
+        return paths
 
     @classmethod
     def infer_auth_path(cls, params: dict[str, Any]) -> str:
+        if params.get("access_token"):
+            return google_sign_in.AUTH_PATH_ID
         return "service_account_file" if params.get("credentials_path") else "default_credentials"
+
+    @staticmethod
+    def delegated_login_config() -> dict[str, Any] | None:
+        return google_sign_in.delegated_login_config("google_analytics")
 
     @staticmethod
     def catalog_hierarchy() -> list[dict[str, str]]:
@@ -100,7 +111,10 @@ class GoogleAnalyticsDataLoader(ExternalDataLoader):
         self._fields_cache: dict[str, list[dict[str, Any]]] = {}
         self._last_sampled = False
         try:
-            if params.get("credentials_path"):
+            # A chosen Google sign-in never falls back to the server's own credentials.
+            if params.get("access_token") or params.get("_auth_path") == google_sign_in.AUTH_PATH_ID:
+                credentials = google_sign_in.user_credentials(params, _SCOPE)
+            elif params.get("credentials_path"):
                 credentials = service_account.Credentials.from_service_account_file(
                     params["credentials_path"], scopes=[_SCOPE])
             else:
@@ -157,6 +171,8 @@ class GoogleAnalyticsDataLoader(ExternalDataLoader):
                 self._fields(self.property_id)
                 return True
             return bool(self._properties())
+        except RefreshError:
+            raise  # an expired sign-in must reach the user as such
         except Exception:
             return False
 

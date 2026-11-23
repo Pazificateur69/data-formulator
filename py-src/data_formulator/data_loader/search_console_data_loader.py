@@ -20,11 +20,11 @@ import google.auth
 import pandas as pd
 import pyarrow as pa
 import requests
-from google.auth.exceptions import DefaultCredentialsError
+from google.auth.exceptions import DefaultCredentialsError, RefreshError
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
-from data_formulator.data_loader import probe_utils
+from data_formulator.data_loader import google_sign_in, probe_utils
 from data_formulator.data_loader.external_data_loader import ExternalDataLoader
 from data_formulator.data_loader.query_runtime import check_cancelled
 from data_formulator.security.sanitize import sanitize_error_message
@@ -32,7 +32,7 @@ from data_formulator.security.sanitize import sanitize_error_message
 logger = logging.getLogger(__name__)
 
 _API = "https://searchconsole.googleapis.com/webmasters/v3"
-_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
+_SCOPE = google_sign_in.SCOPES["search_console"]
 _SEARCH_TYPES = ("web", "image", "video", "news", "discover", "googleNews")
 _REQUEST_TIMEOUT_SECONDS = 60
 _MAX_ROWS = 10_001
@@ -107,18 +107,29 @@ class SearchConsoleDataLoader(ExternalDataLoader):
 
     @classmethod
     def auth_paths(cls) -> list[dict[str, Any]]:
-        return [
+        sign_in = google_sign_in.configured()
+        paths = [
             {"id": "default_credentials", "label": "Application default credentials",
              "description": "Use gcloud login with the Search Console scope, or GOOGLE_APPLICATION_CREDENTIALS.",
-             "fields": [], "required_fields": [], "kind": "ambient", "default": True},
+             "fields": [], "required_fields": [], "kind": "ambient", "default": not sign_in},
             {"id": "service_account_file", "label": "Service account file",
              "description": "Use a service account JSON key file on this machine.",
              "fields": ["credentials_path"], "required_fields": ["credentials_path"], "kind": "credentials"},
         ]
+        if sign_in:
+            paths.insert(0, google_sign_in.sign_in_path(
+                "Use your Google account and the Search Console properties it can read."))
+        return paths
 
     @classmethod
     def infer_auth_path(cls, params: dict[str, Any]) -> str:
+        if params.get("access_token"):
+            return google_sign_in.AUTH_PATH_ID
         return "service_account_file" if params.get("credentials_path") else "default_credentials"
+
+    @staticmethod
+    def delegated_login_config() -> dict[str, Any] | None:
+        return google_sign_in.delegated_login_config("search_console")
 
     @staticmethod
     def catalog_hierarchy() -> list[dict[str, str]]:
@@ -134,7 +145,10 @@ class SearchConsoleDataLoader(ExternalDataLoader):
                         if not (self.search_type == "discover" and field["ref"] in _DISCOVER_UNSUPPORTED)]
         self._by_name = {field["name"]: field for field in self._fields}
         try:
-            if params.get("credentials_path"):
+            # A chosen Google sign-in never falls back to the server's own credentials.
+            if params.get("access_token") or params.get("_auth_path") == google_sign_in.AUTH_PATH_ID:
+                credentials = google_sign_in.user_credentials(params, _SCOPE)
+            elif params.get("credentials_path"):
                 credentials = service_account.Credentials.from_service_account_file(
                     params["credentials_path"], scopes=[_SCOPE])
             else:
@@ -170,6 +184,8 @@ class SearchConsoleDataLoader(ExternalDataLoader):
         # Catches bad credentials, a site_url typo (e.g. a missing trailing slash) and an identity with no property.
         try:
             sites = self._sites()
+        except RefreshError:
+            raise  # an expired sign-in must reach the user as such
         except Exception:
             return False
         return self.site_url in sites if self.site_url else bool(sites)

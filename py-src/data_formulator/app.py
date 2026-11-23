@@ -308,11 +308,13 @@ def _register_blueprints():
     from data_formulator.auth.gateways.oidc_gateway import auth_tokens_bp
     app.register_blueprint(auth_tokens_bp)
 
-    # Kusto and Dataverse delegated Microsoft sign-in are independent of application SSO.
+    # Kusto and Dataverse delegated Microsoft sign-in and Google sign-in are independent of application SSO.
     from data_formulator.auth.gateways.kusto_oauth_gateway import kusto_oauth_bp
     app.register_blueprint(kusto_oauth_bp)
     from data_formulator.auth.gateways.dataverse_oauth_gateway import dataverse_oauth_bp
     app.register_blueprint(dataverse_oauth_bp)
+    from data_formulator.auth.gateways.google_oauth_gateway import google_oauth_bp
+    app.register_blueprint(google_oauth_bp)
 
     # Register backend OIDC gateway (auto-detected: active when OIDC_CLIENT_SECRET is set)
     from data_formulator.auth.providers.oidc import is_backend_oidc_mode

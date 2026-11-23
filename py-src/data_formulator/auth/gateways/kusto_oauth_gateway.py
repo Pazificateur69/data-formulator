@@ -140,12 +140,12 @@ def _pkce_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def _popup_response(origin: str, payload: dict[str, Any]) -> Response:
+def _popup_response(origin: str, payload: dict[str, Any], title: str = "Microsoft sign-in") -> Response:
     nonce = secrets.token_urlsafe(16)
     payload_json = json.dumps(payload).replace("<", "\\u003c")
     origin_json = json.dumps(origin).replace("<", "\\u003c")
     body = f"""<!doctype html>
-<html><head><meta charset="utf-8"><title>Microsoft sign-in</title></head>
+<html><head><meta charset="utf-8"><title>{html.escape(title)}</title></head>
 <body><p>You can close this window.</p><script nonce="{html.escape(nonce)}">
 if (window.opener) {{ window.opener.postMessage({payload_json}, {origin_json}); }}
 window.close();

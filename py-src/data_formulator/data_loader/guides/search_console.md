@@ -4,6 +4,7 @@ site_url: `sc-domain:example.com` for a Domain property, or `https://www.example
 
 **Sign in**
 
+- **Sign in with Google:** shown when the server has a Google sign-in app (`GOOGLE_OAUTH_CLIENT_ID`). Your own Google account's access to each property applies.
 - **Service account file:** in a Google Cloud project, enable the **Google Search Console API**, create a service account and a JSON key, then enter the key file's path. In Search Console, open **Settings → Users and permissions** and add the service account's email as a user of each property.
 - **Application default credentials:** gcloud's own client cannot request Search Console access, so in a project where the Search Console API is enabled, create an OAuth client ID of type **Desktop app**, download its JSON, and run `gcloud auth application-default login --client-id-file=<client.json> --scopes=https://www.googleapis.com/auth/webmasters.readonly`. Setting `GOOGLE_APPLICATION_CREDENTIALS` to a service account key also works.
 
